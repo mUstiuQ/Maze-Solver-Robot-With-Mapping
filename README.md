@@ -4,7 +4,7 @@
 
 Proiect dezvoltat în cadrul **ITEC Embedded Hackathon** (~48h) de o echipă de 3 persoane.
 
-![STM32F407G-DISC1](https://www.st.com/bin/ecommerce/api/image.PF252419.en.feature-description-include-personalized-no-498x305.jpg)
+![THE ROBOT]([https://www.st.com/bin/ecommerce/api/image.PF252419.en.feature-description-include-personalized-no-498x305.jpg](https://github.com/mUstiuQ/Maze-Solver-Robot-With-Mapping/blob/main/PHOTO%20WITH%20THE%20WORKFLOW/WhatsApp%20Image%202026-03-29%20at%2015.29.19%20(1).jpeg))
 
 ---
 
