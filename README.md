@@ -1,235 +1,473 @@
-# 🤖 GestureBot — Wireless Hand-Gesture Controlled Robot
+# 🤖 Maze Solver Robot — ITEC Hackathon 2026
 
-A 4WD wireless rover controlled through a gesture-based wearable glove, featuring proportional speed control, differential steering, ultrasonic proximity feedback, pivot turning, and gesture-triggered dance mode.
+**Robot autonom pentru rezolvarea și cartografierea unui labirint 10×10**
 
-> **Control with your hand. Impress with a dance.**
+Proiect dezvoltat în cadrul **ITEC Embedded Hackathon** (~48h) de o echipă de 3 persoane.
 
----
-
-## 📋 Table of Contents
-
-- [Features](#-features)
-- [Demo](#-demo)
-- [System Architecture](#-system-architecture)
-- [Hardware](#-hardware)
-- [Wiring](#-wiring)
-- [Software](#-software)
-- [Installation](#-installation)
-- [Configuration](#-configuration)
-- [How It Works](#-how-it-works)
-- [Dance Mode](#-dance-mode)
-- [Troubleshooting](#-troubleshooting)
-- [Project Structure](#-project-structure)
-- [License](#-license)
+![STM32F407G-DISC1](https://www.st.com/bin/ecommerce/api/image.PF252419.en.feature-description-include-personalized-no-498x305.jpg)
 
 ---
 
-## ✨ Features
+## 📋 Cuprins
 
-| Feature | Description |
-|---------|-------------|
-| **Proportional Gesture Control** | MPU6050 reads hand tilt angle and maps it to PWM 85–225. Smooth acceleration, not binary ON/OFF |
-| **Differential Steering** | Blends throttle + steering for car-like turning. Inner wheel slows proportionally |
-| **Pivot Turning** | Zero-radius rotation — wheels spin in opposite directions when steering without throttle |
-| **Proximity Buzzer** | HC-SR04 ultrasonic sensor with progressive beep rate. Closer = faster beeping (parking sensor style) |
-| **Radio Failsafe** | Motors stop automatically within 1 second if the glove signal is lost |
-| **Dance Mode** | Shake the glove to trigger a choreographed sequence: 360° spin → figure-8 patterns → 360° spin → beep finale |
-| **Exponential Smoothing** | Low-pass filter (k=0.10) on gyro data eliminates hand tremor while maintaining responsiveness |
-| **Real PWM Speed Control** | Uses L298N ENA/ENB pins with `analogWrite` for true analog motor speed — not just digital HIGH/LOW |
-
----
-
-## 🎬 Demo
-
-> *Insert demo video or GIF here*
+- [Descriere](#descriere)
+- [Funcționalități](#funcționalități)
+- [Hardware](#hardware)
+- [Arhitectura Software](#arhitectura-software)
+- [Schema de Conexiuni](#schema-de-conexiuni)
+- [Algoritmi Implementați](#algoritmi-implementați)
+- [Comenzi Bluetooth](#comenzi-bluetooth)
+- [Configurare și Build](#configurare-și-build)
+- [Calibrare](#calibrare)
+- [Structura Proiectului](#structura-proiectului)
+- [Demo](#demo)
+- [Echipa](#echipa)
 
 ---
 
-## 🏗 System Architecture
+## Descriere
+
+Robotul rezolvă un labirint de 10×10 celule (25cm per celulă) în două faze:
+
+1. **Explorare autonomă (DFS)** — robotul parcurge labirintul folosind algoritmul Depth-First Search cu backtracking, cartografiind toți pereții detectați de senzorii ultrasonici
+2. **Rezolvare pe baza hărții** — juriul specifică o celulă de start și o celulă de stop, robotul calculează drumul cel mai scurt (BFS) sau cel mai lung (DFS brute-force) și îl parcurge automat
+
+Comunicarea cu utilizatorul se face prin **Bluetooth (HC-05)** folosind aplicația **Serial Bluetooth Terminal** pe Android.
+
+---
+
+## Funcționalități
+
+| Funcționalitate | Status | Detalii |
+|---|---|---|
+| Deplasare robot prin labirint | ✅ | Motoare DC cu L298N, corecție laterală cu senzori |
+| Explorare autonomă (DFS) | ✅ | DFS cu stivă + backtracking automat |
+| Cartografiere (mapare) labirint | ✅ | Hartă internă 16×16, pereți pe 4 direcții |
+| Vizualizare hartă pe telefon | ✅ | Hartă text ASCII pe Bluetooth |
+| Configurare start/stop de pe telefon | ✅ | Comenzi `S2,3` și `E7,5` pe BT |
+| Drum cel mai scurt (BFS) | ✅ | Flood Fill + reconstrucție path |
+| Drum cel mai lung | ✅ | DFS brute-force pe graful mapat |
+| Navigare autonomă pe path calculat | ✅ | Urmează secvența de celule automat |
+| Return Home | ✅ | Parcurge stiva DFS invers |
+| Date odometrice | ✅ | Hall sensor — rotații roată + distanță parcursă |
+| Comunicare Bluetooth | ✅ | HC-05 @ 9600 baud, comenzi + telemetrie |
+| Mapare manuală (push mapping) | ✅ | Comenzi F/L/R/B de pe telefon |
+| Senzori filtrați (anti-zgomot) | ✅ | Ultimă valoare validă, limită 50cm |
+| Detecție blocare (Hall) | ✅ | Alertă dacă roțile nu se rotesc |
+
+---
+
+## Hardware
+
+### Componente
+
+| Componentă | Model | Rol |
+|---|---|---|
+| Microcontroller | STM32F407G-DISC1 | Placă de bază, ARM Cortex-M4 @ 168MHz |
+| Driver motoare | L298N Dual H-Bridge | Control PWM motoare DC |
+| Motoare | 2× DC cu reductor | Tracțiune diferențială |
+| Senzori distanță | 3× HC-SR04 | Ultrasonici: față, stânga, dreapta |
+| Senzor Hall | YS-27 + magnet | Odometrie — rotații roată |
+| Bluetooth | HC-05 Master/Slave | Comunicare cu telefonul |
+| Alimentare | 6× AA → 9V + buck converter 5V | L298N + STM32 + senzori |
+| Șasiu | Kit robot 2 motoare | Platformă mobilă |
+
+### Pinout STM32F407G-DISC1
 
 ```
-┌─────────────────────┐         NRF24L01          ┌─────────────────────────┐
-│     TRANSMITTER     │     250 kbps wireless      │        RECEIVER         │
-│      (Glove)        │ ─────────────────────────► │        (Robot)          │
-│                     │                            │                         │
-│  Arduino Nano       │    Packet Structure:       │  Arduino Mega 2560      │
-│  MPU6050 Gyro/Accel │    {                       │  L298N Motor Driver     │
-│  NRF24L01 Radio     │      accel:  0-225         │  4x DC Motors (4WD)    │
-│  9V Battery         │      brake:  0-225         │  HC-SR04 Ultrasonic    │
-│                     │      steer: -135..+135     │  Buzzer                │
-│                     │      dance:  true/false    │  3x 18650 Batteries    │
-└─────────────────────┘    }                       └─────────────────────────┘
+┌─────────────────────────────────────────────┐
+│  MOTOARE (L298N)                            │
+│  ENA → PB4 (TIM3_CH1) = Motor DREAPTA      │
+│  ENB → PB5 (TIM3_CH2) = Motor STÂNGA       │
+│  IN1 → PE7  IN2 → PE8  (direcție dreapta)  │
+│  IN3 → PE9  IN4 → PE10 (direcție stânga)   │
+├─────────────────────────────────────────────┤
+│  SENZORI ULTRASONICI (HC-SR04)              │
+│  FRONT: Trig=PC0  Echo=PB0 (5V tolerant)   │
+│  LEFT:  Trig=PC2  Echo=PB1 (5V tolerant)   │
+│  RIGHT: Trig=PC4  Echo=PE6 (5V tolerant)   │
+├─────────────────────────────────────────────┤
+│  HALL SENSOR (YS-27)                        │
+│  Signal → PA1 (polling, nu interrupt)       │
+│  VCC → 3.3V   GND → GND                    │
+├─────────────────────────────────────────────┤
+│  BLUETOOTH (HC-05)                          │
+│  STM32 TX (PD5) → HC-05 RXD                │
+│  STM32 RX (PD6) → HC-05 TXD                │
+│  USART2 @ 9600 baud                        │
+├─────────────────────────────────────────────┤
+│  LED-URI (pe Discovery board)               │
+│  PD12 (verde)    = perete față detectat     │
+│  PD13 (portocaliu) = perete stânga detectat │
+│  PD14 (roșu)     = perete dreapta detectat  │
+│  PD15 (albastru) = heartbeat / așteptare    │
+├─────────────────────────────────────────────┤
+│  BUTON                                      │
+│  PA0 (USER) = START/STOP toggle             │
+└─────────────────────────────────────────────┘
+```
+
+### Alimentare
+
+```
+6×AA (9V) ──→ L298N VCC (motor power)
+            └──→ Buck Converter → 5V ──→ STM32 (5V pin)
+                                       ──→ HC-SR04 VCC
+                                       ──→ HC-05 VCC
+L298N 5V jumper: SCOS (alimentare externă)
+YS-27 Hall: alimentat de la 3.3V STM32
 ```
 
 ---
 
-## 🔧 Hardware
+## Arhitectura Software
 
-### Bill of Materials
-
-#### Transmitter (Glove)
-
-| Component | Qty | Description |
-|-----------|-----|-------------|
-| Arduino Nano | 1 | MCU for gesture detection |
-| MPU6050 | 1 | 6-axis gyroscope & accelerometer |
-| NRF24L01 | 1 | 2.4GHz wireless transceiver |
-| 470µF Capacitor | 1 | NRF24L01 power stabilization |
-| 9V Battery | 1 | Power source |
-
-#### Receiver (Robot)
-
-| Component | Qty | Description |
-|-----------|-----|-------------|
-| Arduino Mega 2560 | 1 | Central controller |
-| L298N Motor Driver | 1 | Dual H-bridge for motor control |
-| DC Motors | 4 | 4WD propulsion |
-| NRF24L01 | 1 | 2.4GHz wireless transceiver |
-| HC-SR04 | 1 | Ultrasonic distance sensor |
-| Active Buzzer | 1 | Audio feedback |
-| 470µF Capacitor | 1 | NRF24L01 power stabilization |
-| 3x 18650 Batteries | 1 pack | High-current power |
-
-**Total cost: < €50** — all components off-the-shelf and fully reproducible.
-
----
-
-## 🔌 Wiring
-
-### Receiver — Arduino Mega
-
-| Component | Pin Name | Arduino Pin | Notes |
-|-----------|----------|-------------|-------|
-| L298N | IN1 | D5 | Left motors direction A |
-| L298N | IN2 | D4 | Left motors direction B |
-| L298N | IN3 | D3 | Right motors direction A |
-| L298N | IN4 | D2 | Right motors direction B |
-| L298N | ENA | D9 | Left motors PWM speed (**remove jumper!**) |
-| L298N | ENB | D10 | Right motors PWM speed (**remove jumper!**) |
-| NRF24L01 | CE / CSN | D7 / D11 | Radio control |
-| NRF24L01 | SCK / MOSI / MISO | 52 / 51 / 50 | Hardware SPI |
-| NRF24L01 | VCC / GND | 3.3V / GND | Add 470µF capacitor! |
-| HC-SR04 | Trig / Echo | A3 / A4 | Distance reading |
-| Buzzer | VCC | D6 | Audio alerts |
-
-### Transmitter — Arduino Nano
-
-| Component | Pin Name | Arduino Pin |
-|-----------|----------|-------------|
-| NRF24L01 | CE / CSN | D7 / D8 |
-| NRF24L01 | SCK / MOSI / MISO | D13 / D11 / D12 |
-| MPU6050 | SDA / SCL | A4 / A5 |
-
----
-
-## 💻 Software
-
-### Dependencies
-
-Install via Arduino IDE Library Manager:
-
-- **RF24** by TMRh20
-- **MPU6050_tockn**
-- Servo (built-in)
-- SPI (built-in)
-- Wire (built-in)
-
----
-
-## 🚀 Installation
-
-1. **Assemble the hardware** using the wiring tables above
-2. **Install all required libraries** in Arduino IDE
-3. **Upload the code:**
-   - `Transmitter/Transmitter.ino` → Arduino Nano (Glove)
-   - `Receiver/Receiver.ino` → Arduino Mega (Robot)
-4. **Calibrate:** Place glove on a flat surface → press reset on Nano → wait ~3 seconds for gyro offset calibration
-5. **Drive:**
-   - Tilt forward → accelerate
-   - Tilt backward → reverse
-   - Tilt left/right → steer
-   - Steer without throttle → pivot turn (spin in place)
-   - Shake hand → dance mode
-
----
-
-## ⚙ Configuration
-
-### Gesture Sensitivity (Transmitter)
-
-```cpp
-int deadzone = 22;       // Degrees of tilt before response starts
-int maxAngle = 45;       // Degrees at full speed/steer
-int minPWM = 85;         // Minimum PWM to overcome motor inertia
-int maxPWM = 225;        // Maximum motor speed
-int steerPower = 135;    // Maximum steering intensity
-float FILTER_K = 0.10;   // Smoothing factor (lower = smoother, higher = faster response)
+```
+┌──────────────────────────────────────────────────────┐
+│                    main.c                            │
+├──────────────┬───────────────┬────────────────────────┤
+│  SENZORI     │   MOTOARE     │    LABIRINT            │
+│  ──────────  │   ────────    │    ────────            │
+│  Citeste_    │   Mers_       │    Maze_Init()         │
+│  Senzor()    │   Celula()    │    Maze_Scan()         │
+│  Citeste_    │   Viraj_S()   │    Maze_Status()       │
+│  Filtrat()   │   Viraj_D()   │    maze_walls[16][16]  │
+│  Citeste_    │   Viraj_180() │    maze_visit[16][16]  │
+│  Toti()      │   Roteste_    │                        │
+│              │   La()        │                        │
+├──────────────┴───────────────┴────────────────────────┤
+│                 ALGORITMI                             │
+│  ─────────────────────────                            │
+│  DFS_Step()        — explorare cu backtracking        │
+│  BFS_Shortest()    — drum cel mai scurt (flood fill)  │
+│  BFS_Longest()     — drum cel mai lung (DFS brute)    │
+│  Return_Home()     — întoarcere pe stiva DFS          │
+│  Run_Path()        — urmează path calculat            │
+├───────────────────────────────────────────────────────┤
+│                 COMUNICARE BT                         │
+│  ─────────────────────────                            │
+│  Process_BT()  — parsare comenzi (polling UART)       │
+│  BT_Map()      — transmite date hartă                 │
+│  BT_Visual()   — transmite hartă ASCII vizuală        │
+│  BT_Path()     — transmite drumul calculat            │
+│  Manual_Cmd()  — comenzi mapare manuală               │
+└───────────────────────────────────────────────────────┘
 ```
 
-### Proximity Buzzer (Receiver)
+---
 
-```cpp
-// Buzzer starts beeping below this distance (cm)
-// Beep interval: 50ms at 5cm, 500ms at threshold
-if (dist > 0 && dist < 20) { ... }
+## Schema de Conexiuni
+
+```
+                    ┌─────────────┐
+                    │  STM32F407  │
+                    │  DISC1      │
+          ┌─────────┤             ├─────────┐
+          │   PE7-10│  Motor Dir  │PB4,PB5  │
+          │         │  (GPIO OUT) │(TIM3 PWM)│
+          │         │             │         │
+          │   PC0,2,4  Trig OUT  │         │
+          │   PB0,1    Echo IN   │         │
+          │   PE6      Echo IN   │         │
+          │         │             │         │
+          │   PA1   │  Hall IN    │         │
+          │   PA0   │  Button IN  │         │
+          │         │             │         │
+          │   PD5   │  UART TX ───┼──→ HC-05 RXD
+          │   PD6   │  UART RX ←──┼─── HC-05 TXD
+          │         └─────────────┘         │
+          │                                 │
+          │         ┌─────────────┐         │
+          └────────→│   L298N     │←────────┘
+          IN1-IN4   │  Motor      │  ENA, ENB
+                    │  Driver     │
+                    │             │
+                    │ OUT1,2  OUT3,4
+                    └──┬──┬───┬──┬┘
+                       │  │   │  │
+                    Motor R  Motor L
+                    
+    ┌──────┐    ┌──────┐    ┌──────┐
+    │HC-SR04│    │HC-SR04│    │HC-SR04│
+    │FRONT  │    │LEFT   │    │RIGHT  │
+    └──────┘    └──────┘    └──────┘
 ```
 
-### Motor Direction Fix
+---
 
-If motors spin the wrong way, swap the `HIGH`/`LOW` logic in the `motors()` function for the affected side instead of rewiring.
+## Algoritmi Implementați
+
+### 1. DFS (Depth-First Search) — Explorare
+
+Algoritmul explorează labirintul preferând celule nevizitate. La fiecare celulă:
+
+1. Scanează pereții cu cei 3 senzori ultrasonici
+2. Actualizează harta internă (`maze_walls[][]`)
+3. Caută vecini nevizitați (visit_count == 0)
+4. Dacă găsește → salvează direcția de întoarcere pe stivă → merge acolo
+5. Dacă nu → **BACKTRACK** = scoate de pe stivă, se întoarce
+6. Când stiva e goală = **EXPLORARE COMPLETĂ**
+
+```
+Celula curentă: (2,3) orientat Nord
+Senzori: F=25cm S=8cm D=45cm
+Pereți detectați: [NW] (nord + vest)
+Vecini liberi: Est(nevizitat), Sud(vizitat×1)
+Decizie: → Est (preferă nevizitat)
+Stivă: push(Vest) = direcția de întoarcere
+```
+
+### 2. BFS (Breadth-First Search) — Drum Cel Mai Scurt
+
+Flood Fill de la start spre end pe harta cartografiată:
+
+1. Inițializează toate celulele cu distanță -1
+2. Start = distanță 0, adaugă în coadă
+3. BFS: pentru fiecare celulă din coadă, explorează vecinii fără perete
+4. Când ajunge la end → reconstruiește drumul prin `bfs_parent[][]`
+5. Inversează drumul (e construit de la end la start)
+
+### 3. Longest Path — Drum Cel Mai Lung
+
+DFS brute-force care explorează toate căile posibile și o reține pe cea mai lungă:
+
+1. Pornește de la start cu adâncime 0
+2. La fiecare celulă, marchează ca vizitată și explorează recursiv vecinii
+3. Când ajunge la end, compară adâncimea cu maximul cunoscut
+4. La întoarcere, demarchează celula (backtracking)
+5. Rezultat: cel mai lung drum fără bucle
+
+### 4. Corecție Laterală — Mers Drept
+
+În timpul mersului pe culoar:
+- Dacă ambii pereți vizibili (<20cm): centrare proporțională cu diferența
+- Dacă un perete <6cm: corecție agresivă (±8000 PWM)
+- Safety: perete frontal <8cm → stop instant
 
 ---
 
-## 🧠 How It Works
+## Comenzi Bluetooth
 
-1. **Glove** reads hand tilt angles from MPU6050 (pitch = speed, roll = steering)
-2. Raw angles pass through an **exponential smoothing filter** (k=0.10) to eliminate tremor
-3. Filtered angles are mapped through **deadzones** (22°) into PWM values (85–225)
-4. A **data packet** `{accel, brake, steer, dance}` is transmitted via NRF24L01 at 250kbps
-5. **Robot** receives the packet and computes differential motor speeds
-6. **L298N** driver applies direction via IN1–IN4 and speed via **analogWrite on ENA/ENB**
-7. **HC-SR04** continuously measures distance — buzzer beeps progressively when objects are near
-8. If **no radio packet** is received for 3 seconds → motors shut down automatically (failsafe)
+Aplicație recomandată: **Serial Bluetooth Terminal** (Android)
+
+### Comenzi de pe butoane (single char)
+
+| Comandă | Acțiune |
+|---------|---------|
+| `G` | Start explorare autonomă DFS |
+| `X` | Stop urgență — oprește motoare + trimite harta |
+| `M` | Afișează harta vizuală pe terminal |
+| `P` | Calculează drumul cel mai SCURT (BFS) |
+| `Q` | Calculează drumul cel mai LUNG |
+| `R` | RUN — robotul urmează drumul calculat |
+| `H` | Return Home — se întoarce pe stiva DFS |
+
+### Comenzi tastate manual
+
+| Comandă | Acțiune |
+|---------|---------|
+| `S2,3` + Send | Setează celula START la (2,3) |
+| `E7,5` + Send | Setează celula END la (7,5) |
+| `DN` + Send | Setează direcția robotului la Nord |
+| `DE` + Send | Setează direcția robotului la Est |
+| `DS` + Send | Setează direcția robotului la Sud |
+| `DW` + Send | Setează direcția robotului la Vest |
+
+### Comenzi mapare manuală
+
+| Comandă | Acțiune |
+|---------|---------|
+| `F` | Forward — am împins robotul o celulă |
+| `L` | Left — am rotit robotul 90° stânga |
+| `B` | Back — am rotit robotul 180° |
+
+### Configurare butoane app
+
+```
+M1 = G    M2 = M    M3 = X    M4 = P
+M5 = R    M6 = H    M7 = Q
+```
+
+### Exemplu output Bluetooth
+
+```
+=== MAZE ROBOT v3 ===
+G=explore X=stop M=map
+>>>GO<<<
+(0,0)N v1 F:25 S:8 D:12 [NW] H:0 dist:0cm #1
+->E
+(1,0)E v1 F:45 S:6 D:8 [SW] H:3 dist:23cm #2
+->N
+(1,1)N v1 F:8 S:12 D:25 [NE] H:6 dist:47cm #3
+<<S
+(1,0)S v2 F:45 S:8 D:6 [SW] H:9 dist:70cm #3
+>>> DONE! <<<
+
+--- HARTA ---
++---+---+
+|   | S |
++   +   +
+| ^ |   |
++---+---+
+Robot:(0,0)N Cells:3 Hall:9 Dist:70cm
+```
 
 ---
 
-## 💃 Dance Mode
+## Configurare și Build
 
-Triggered by **shaking the glove** (accelerometer detects > 2.5G total acceleration).
+### Cerințe
 
-### Choreography Sequence (~6.2 seconds)
+- **STM32CubeIDE** (sau STM32CubeMX + arm-none-eabi-gcc)
+- **Serial Bluetooth Terminal** (Android) — pentru comunicare BT
+- Board **STM32F407G-DISC1** cu **ST-LINK V2** integrat
 
-| Time | Action |
-|------|--------|
-| 0.0s – 0.8s | 360° spin right |
-| 0.8s – 1.0s | Pause |
-| 1.0s – 2.6s | Figure-8 pattern #1 |
-| 2.6s – 2.8s | Pause |
-| 2.8s – 4.4s | Figure-8 pattern #2 |
-| 4.4s – 4.6s | Pause |
-| 4.6s – 5.4s | 360° spin left |
-| 5.4s – 6.2s | Double beep finale |
+### Pași
 
-- Uses **edge detection** — dance triggers once per shake, doesn't loop
-- Shake again after completion to retrigger
-- All timing values and PWM speeds are tunable for different surfaces
+1. **Clonează repository-ul:**
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/maze-solver-robot.git
+   ```
+
+2. **Deschide în STM32CubeIDE:**
+   - File → Import → Existing Projects into Workspace
+   - Selectează folderul proiectului
+
+3. **Build:**
+   - Project → Build All (Ctrl+B)
+
+4. **Flash:**
+   - Run → Run As → STM32 C/C++ Application
+
+5. **Conectare Bluetooth:**
+   - Împerechează HC-05 cu telefonul (PIN: `1234`)
+   - Deschide Serial Bluetooth Terminal
+   - Conectează-te la HC-05
+   - Configurează butoanele M1-M7
+
+### CubeMX Configuration
+
+```
+Clock: HSE 8MHz → PLL → SYSCLK 168MHz
+APB1: 42MHz (timer clock 84MHz)
+APB2: 84MHz
+
+TIM3: PSC=167, Period=65535, CH1+CH2 PWM (PB4, PB5)
+TIM5: PSC=0 (overridden to 41 in code), Period=max, 1μs resolution
+USART2: 115200 in CubeMX, re-init to 9600 in code (PD5 TX, PD6 RX)
+```
 
 ---
 
-## 🔍 Troubleshooting
+## Calibrare
 
-| Problem | Solution |
-|---------|----------|
-| Robot stutters or resets | Add 470µF capacitor to NRF24L01 VCC/GND |
-| Motors spin wrong direction | Swap HIGH/LOW in `motors()` function — don't rewire |
-| Robot doesn't move at low tilt | Increase `minPWM` value |
-| Constant buzzer beeping | Object detected within 20cm, or sensor reading noise — check sensor mounting |
-| No response from robot | Check that both TX and RX use the same radio address and data rate |
-| Dance mode won't stop | Already fixed with edge detection — update to latest code |
-| Robot stops after a few seconds | Transmitter not powered on — failsafe activating. Power glove first |
+Aceste valori trebuie ajustate pe labirintul real:
+
+```c
+#define SPEED_RIGHT  48000    // PWM motor dreapta (crește dacă deviează stânga)
+#define SPEED_LEFT   50000    // PWM motor stânga
+#define SPEED_TURN   30000    // PWM pentru viraje
+#define TURN_90_MS   350      // Durata viraj 90° (ms)
+#define TURN_180_MS  700      // Durata viraj 180° (ms)
+#define CELL_DRIVE_MS 450     // Timp mers o celulă de 25cm (ms)
+#define WALL_FRONT   13       // Prag detecție perete frontal (cm)
+#define WALL_SIDE    6        // Prag corecție laterală (cm)
+#define WALL_DETECT  12       // Prag mapare perete (cm)
+```
+
+### Procedură de calibrare
+
+1. **Mers drept:** Pune robotul pe culoar drept, pornește cu G. Dacă deviază dreapta → crește `SPEED_RIGHT`. Dacă deviază stânga → crește `SPEED_LEFT`.
+
+2. **Distanță celulă:** Măsoară câți cm parcurge la un `CELL_DRIVE_MS`. Ajustează până parcurge exact 25cm.
+
+3. **Viraj 90°:** Pornește robotul, lasă-l să facă un viraj. Dacă virează prea mult → scade `TURN_90_MS`. Dacă prea puțin → crește.
+
+4. **Praguri senzori:** Dacă detectează pereți care nu există → scade `WALL_DETECT`. Dacă nu detectează pereți existenți → crește.
 
 ---
 
-## 📄 License
+## Structura Proiectului
 
-This project is open source. Feel free to use, modify, and share.
+```
+maze-solver-robot/
+├── README.md                    # Acest fișier
+├── LICENSE                      # MIT License
+├── docs/
+│   ├── pinout.md               # Pinout detaliat
+│   ├── algorithms.md           # Descriere algoritmi
+│   └── calibration.md          # Ghid calibrare
+├── src/
+│   └── main.c                  # Codul sursă complet
+├── hardware/
+│   ├── wiring_diagram.md       # Schema de conexiuni
+│   └── BOM.md                  # Bill of Materials
+└── images/
+    ├── robot_photo.jpg         # Poză robot
+    ├── maze_map.jpg            # Exemplu hartă generată
+    └── terminal_output.jpg     # Screenshot terminal BT
+```
+
+---
+
+## Fluxul la Concurs
+
+### Faza 1 — Explorare
+```
+1. Pune robotul în colțul labirintului, orientat Nord
+2. Apasă PA0 sau trimite G pe BT
+3. Robotul explorează automat tot labirintul
+4. La final: >>> DONE! <<<
+5. Trimite M → harta apare pe telefon
+6. Arată juriului harta
+```
+
+### Faza 2 — Rezolvare
+```
+1. Juriul specifică: start=(2,3) stop=(7,5)
+2. Tastezi pe telefon: S2,3 [Send]
+3. Tastezi: E7,5 [Send]
+4. Apeși P (shortest) sau Q (longest)
+5. Pe ecran apare drumul calculat
+6. Pui robotul în celula de start
+7. Tastezi: DN [Send] (orientat Nord)
+8. Apeși R → robotul urmează drumul automat
+9. >>> AJUNS! <<<
+```
+
+---
+
+## Demo
+
+### Hartă generată de robot (output Bluetooth)
+```
+--- HARTA ---
++---+---+   +   +   +   +
+| 2  2| |         . .|
++   +   +   +   +   +   +
+| 2  2|2|   .   . . .|
++   +   +   +   +   +   +
+| 2  2       .   . . .|
++   +   +   +   +   +   +
+|2|     .   .   . . .|
++   +   +   +   +   +   +
+|2|   .   .   . . .|
++   +   +   +   +   +   +
+| |   .   .   . .|
++---+   +   +   +   +   +
+|       .   .   . .|
++   +   +   +   +   +   +
+Robot:(7,15) E Cells:44 Hall:15 Dist:117cm
+```
+
+---
+
+## Echipa
+
+Proiect dezvoltat în cadrul **ITEC Embedded Hackathon 2026** — Timișoara
+
+---
+
+## Licență
+
+MIT License — vezi fișierul [LICENSE](LICENSE)
